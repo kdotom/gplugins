@@ -68,24 +68,42 @@ class LayoutViewServerEndpoint(WebSocketEndpoint):
         return [d[1] for d in self.layout_view.annotation_templates()]
 
     def layer_dump(self):
-        return [
-            {
-                "dp": layer.eff_dither_pattern(),
-                "ls": layer.eff_line_style(),
-                "c": layer.eff_fill_color(),
-                "fc": layer.eff_frame_color(),
-                "m": layer.marked,
-                "s": layer.source,
-                "t": layer.transparent,
-                "va": layer.valid,
-                "v": layer.visible,
-                "w": layer.width,
-                "x": layer.xfill,
-                "name": layer.name,
-                "id": layer.id(),
-            }
-            for layer in self.layout_view.each_layer()
-        ]
+        js = []
+        for layer in self.layout_view.each_layer():
+            js.append(
+                {
+                    "dp": layer.eff_dither_pattern(),
+                    "ls": layer.eff_line_style(),
+                    "c": layer.eff_fill_color(),
+                    "fc": layer.eff_frame_color(),
+                    "m": layer.marked,
+                    "s": layer.source,
+                    "t": layer.transparent,
+                    "va": layer.valid,
+                    "v": layer.visible,
+                    "w": layer.width,
+                    "x": layer.xfill,
+                    "name": layer.name,
+                    "id": layer.id(),
+                }
+            )
+        return js
+
+    def hierarchy_dump(self) -> dict[str, object]:
+        layout = self.layout_view.active_cellview().layout()
+        top_cell = layout.top_cell()
+
+        def get_child_dict(cell: db.Cell):
+            if not cell.child_cells():
+                return ""
+            child_dict = {}
+            iter = cell.each_child_cell()
+            for child_idx in iter:
+                child = layout.cell(child_idx)
+                child_dict[child.name] = get_child_dict(child)
+            return child_dict
+
+        return {top_cell.name: get_child_dict(top_cell)}
 
     async def connection(self, websocket: WebSocket, path: str | None = None) -> None:
         self.layout_view = lay.LayoutView()
@@ -102,6 +120,7 @@ class LayoutViewServerEndpoint(WebSocketEndpoint):
                     "modes": self.mode_dump(),
                     "annotations": self.annotation_dump(),
                     "layers": self.layer_dump(),
+                    "hierarchy": self.hierarchy_dump(),
                 }
             )
         )
