@@ -6,6 +6,7 @@ import bokeh.plotting as bp
 import gdsfactory as gf
 import holoviews as hv
 import panel as pn
+import param
 import yaml
 from gdsfactory.picmodel import (
     PicYamlConfiguration,
@@ -20,10 +21,12 @@ pn.extension("bokeh")
 hv.extension("bokeh")
 
 
-class SchematicEditor:
+class SchematicEditor(param.Parameterized):
+    update = param.Integer(default=0)
+
     def __init__(self, filename: str | Path, pdk: gf.Pdk | None = None) -> None:
         self._connected_ports = {}
-        self._inst_boxes = list()
+        self._inst_boxes = []
 
         filepath = Path(filename)
         self.path = filepath
@@ -38,19 +41,18 @@ class SchematicEditor:
         inst_remove = pn.widgets.Button(name="Remove", button_type="danger")
         row = pn.Row(inst_name, inst_type, inst_remove)
 
-        # Associate the row with its remove button using a custom attribute
         inst_remove.row_ref = instance_name
         inst_remove.on_click(self.remove_instance_row)
-
         return row
 
     def remove_instance_row(self, event) -> None:
         instance_name = event.obj.row_ref
-        self.instances.pop(instance_name)
-        self.schematic.instances.pop(instance_name)
+        self.instances.pop(instance_name, None)
+        self.schematic.instances.pop(instance_name, None)
+        self.update += 1  # Increment update to trigger a refresh
 
-    @property
-    def panel(self) -> pn.layout.Column:
+    @param.depends("update", watch=True)
+    def view(self) -> pn.layout.Column:
         instances = [
             self.create_instance_row(iname, itype.settings.function_name)
             for iname, itype in self.instances.items()
@@ -63,12 +65,13 @@ class SchematicEditor:
         )
         inst_add = pn.widgets.Button(name="Add", button_type="primary")
         inst_row = pn.Row(inst_name, inst_type, inst_add)
-
         # Assuming circuitviz.show_netlist returns a Bokeh plot
         # circuit_plot = circuitviz.show_netlist(self.schematic, self.symbols, self.path)
         circuit_plot = self.bokeh_plot()
+        return pn.Column(*instances, *self._net_grid, inst_row, circuit_plot)
 
-        return pn.Column(*instances, inst_row, circuit_plot)
+    def panel(self) -> pn.layout.Column:
+        return self.view
 
     def setup_events(self):
         self.on_instance_added = [
@@ -91,60 +94,60 @@ class SchematicEditor:
             )
 
     def serve(self):
-        pn.serve(self.panel)
+        pn.serve(self.panel())
 
-    def _get_instance_selector(self, inst_name=None, component_name=None):
-        instance_box = pn.widgets.TextInput(
-            name="Instance Name", placeholder="Enter a name"
-        )
-        component_selector = pn.widgets.Select(
-            name="Component", options=self.component_list
-        )
-        return self._add_remove_option(
-            inst_name, instance_box, component_name, component_selector
-        )
+    # def _get_instance_selector(self, inst_name=None, component_name=None):
+    #     instance_box = pn.widgets.TextInput(
+    #         name="Instance Name", placeholder="Enter a name"
+    #     )
+    #     component_selector = pn.widgets.Select(
+    #         name="Component", options=self.component_list
+    #     )
+    #     return self._add_remove_option(
+    #         inst_name, instance_box, component_name, component_selector
+    #     )
 
-    def _get_port_selector(self, port_name: str | None = None, port: str | None = None):
-        instance_port_selector = pn.widgets.TextInput(
-            name="Instance:Port", placeholder="Enter instance and port"
-        )
-        port_name_box = pn.widgets.TextInput(
-            name="Port Name", placeholder="Enter a name"
-        )
-        return self._add_remove_option(
-            port_name, port_name_box, port, instance_port_selector
-        )
+    # def _get_port_selector(self, port_name: str | None = None, port: str | None = None):
+    #     instance_port_selector = pn.widgets.TextInput(
+    #         name="Instance:Port", placeholder="Enter instance and port"
+    #     )
+    #     port_name_box = pn.widgets.TextInput(
+    #         name="Port Name", placeholder="Enter a name"
+    #     )
+    #     return self._add_remove_option(
+    #         port_name, port_name_box, port, instance_port_selector
+    #     )
 
-    def _add_remove_option(self, arg0, arg1, arg2, arg3):
-        can_remove = False
-        if arg0:
-            arg1.value = arg0
-        if arg2:
-            arg3.value = arg2
-            can_remove = True
-        remove_button = pn.widgets.Button(
-            name="Remove", button_type="danger", disabled=not can_remove
-        )
-        remove_button.on_click(self._on_remove_button_clicked)
-        row = pn.Row(arg1, arg3, remove_button)
-        row._component_selector = arg3
-        row._instance_box = arg1
-        row._remove_button = remove_button
-        remove_button._row = row
-        arg1._row = row
-        arg3._row = row
-        return row
+    # def _add_remove_option(self, arg0, arg1, arg2, arg3):
+    #     can_remove = False
+    #     if arg0:
+    #         arg1.value = arg0
+    #     if arg2:
+    #         arg3.value = arg2
+    #         can_remove = True
+    #     remove_button = pn.widgets.Button(
+    #         name="Remove", button_type="danger", disabled=not can_remove
+    #     )
+    #     remove_button.on_click(self._on_remove_button_clicked)
+    #     row = pn.Row(arg1, arg3, remove_button)
+    #     row._component_selector = arg3
+    #     row._instance_box = arg1
+    #     row._remove_button = remove_button
+    #     remove_button._row = row
+    #     arg1._row = row
+    #     arg3._row = row
+    #     return row
 
-    def _update_instance_options(self, **kwargs) -> None:
-        inst_names = self._schematic.instances.keys()
-        for inst_box in self._inst_boxes:
-            inst_box.options = list(inst_names)
+    # def _update_instance_options(self, **kwargs) -> None:
+    #     inst_names = self._schematic.instances.keys()
+    #     for inst_box in self._inst_boxes:
+    #         inst_box.options = list(inst_names)
 
-    def _make_instance_removable(self, instance_name, **kwargs) -> None:
-        for row in self._instance_grid.children:
-            if row._instance_box.value == instance_name:
-                row._remove_button.disabled = False
-                return
+    # def _make_instance_removable(self, instance_name, **kwargs) -> None:
+    #     for row in self._instance_grid.children:
+    #         if row._instance_box.value == instance_name:
+    #             row._remove_button.disabled = False
+    #             return
 
     def _get_net_selector(self, inst1=None, port1=None, inst2=None, port2=None):
         inst_names = list(self._schematic.instances.keys())
@@ -167,32 +170,32 @@ class SchematicEditor:
             port2_selector.value = port2
         return pn.Row([inst1_selector, port1_selector, inst2_selector, port2_selector])
 
-    def _add_row_when_full(self, change) -> None:
-        if change["old"] == "" and change["new"] != "":
-            this_box = change["owner"]
-            last_box = self._instance_grid.children[-1].children[0]
-            if this_box is last_box:
-                new_row = self._get_instance_selector()
-                self._instance_grid.children += (new_row,)
-                new_row.children[0].observe(self._add_row_when_full, names=["value"])
-                new_row.children[1].observe(
-                    self._on_instance_component_modified, names=["value"]
-                )
-                new_row._associated_component = None
+    # def _add_row_when_full(self, change) -> None:
+    #     if change["old"] == "" and change["new"] != "":
+    #         this_box = change["owner"]
+    #         last_box = self._instance_grid.children[-1].children[0]
+    #         if this_box is last_box:
+    #             new_row = self._get_instance_selector()
+    #             self._instance_grid.children += (new_row,)
+    #             new_row.children[0].observe(self._add_row_when_full, names=["value"])
+    #             new_row.children[1].observe(
+    #                 self._on_instance_component_modified, names=["value"]
+    #             )
+    #             new_row._associated_component = None
 
-    def _add_net_row_when_full(self, change) -> None:
-        if change["old"] == "" and change["new"] != "":
-            this_box = change["owner"]
-            last_box = self._net_grid.children[-1].children[0]
-            if this_box is last_box:
-                new_row = self._get_net_selector()
-                self._net_grid.children += (new_row,)
-                new_row.children[0].observe(
-                    self._add_net_row_when_full, names=["value"]
-                )
-                for child in new_row.children:
-                    child.observe(self._on_net_modified, names=["value"])
-                new_row._associated_component = None
+    # def _add_net_row_when_full(self, change) -> None:
+    #     if change["old"] == "" and change["new"] != "":
+    #         this_box = change["owner"]
+    #         last_box = self._net_grid.children[-1].children[0]
+    #         if this_box is last_box:
+    #             new_row = self._get_net_selector()
+    #             self._net_grid.children += (new_row,)
+    #             new_row.children[0].observe(
+    #                 self._add_net_row_when_full, names=["value"]
+    #             )
+    #             for child in new_row.children:
+    #                 child.observe(self._on_net_modified, names=["value"])
+    #             new_row._associated_component = None
 
     def _update_schematic_plot(self, **kwargs) -> None:
         circuitviz.update_schematic_plot(
@@ -255,14 +258,17 @@ class SchematicEditor:
 
     @property
     def instance_widget(self):
+        """TOREMOVE"""
         return self._instance_grid
 
     @property
     def net_widget(self):
+        """TOREMOVE"""
         return self._net_grid
 
     @property
     def port_widget(self):
+        """TOREMOVE"""
         return self._port_grid
 
     def bokeh_plot(self):
@@ -380,18 +386,8 @@ class SchematicEditor:
         self._schematic = schematic
 
         # process instances
-        instances = netlist["instances"]
+        netlist["instances"]
         nets = netlist.get("nets", [])
-        new_rows = []
-        for inst_name, inst in instances.items():
-            component_name = inst["component"]
-            new_row = self._get_instance_selector(
-                inst_name=inst_name, component_name=component_name
-            )
-            new_row[0].param.watch(self._add_row_when_full, "value")
-            new_row[1].param.watch(self._on_instance_component_modified, "value")
-            new_rows.append(new_row)
-        self._instance_grid = pn.Column(*new_rows)
 
         # process nets
         unpacked_nets = []
@@ -405,7 +401,7 @@ class SchematicEditor:
             net_rows.append(self._get_net_selector(*unpacked_net))
             self._connected_ports[net[0]] = net[1]
             self._connected_ports[net[1]] = net[0]
-        self._net_grid = pn.Column(*net_rows)
+        self._net_grid = pn.Row(*net_rows)
 
         # process ports
         ports = netlist.get("ports", {})
@@ -413,10 +409,8 @@ class SchematicEditor:
         new_rows = []
         for port_name, port in ports.items():
             new_row = self._get_port_selector(port_name=port_name, port=port)
-            new_row[0].param.watch(self._add_row_when_full, "value")
-            new_row[1].param.watch(self._on_instance_component_modified, "value")
             new_rows.append(new_row)
-        self._port_grid = pn.Column(*new_rows)
+        self._port_grid = pn.Row(*new_rows)
 
     def instantiate_layout(
         self,
